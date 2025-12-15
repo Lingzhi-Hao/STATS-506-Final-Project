@@ -1,0 +1,758 @@
+---
+title: "STATS 506 Final Project"
+author: "Lingzhi Hao"
+format:
+  html: 
+    code-fold: true
+    embed-resources: true
+  pdf: default
+---
+
+## **GitHub Repository:** <https://github.com/Lingzhi-Hao/STATS-506-Final-Project>
+
+```{r}
+set.seed(42)
+
+library(dplyr)
+library(e1071)
+library(nortest)
+library(ggplot2)
+library(patchwork)
+```
+
+Set number of repetitions for Monte Carlo simulations, general sample size grid, and threshold of convergence.
+
+```{r}
+reps <- 5000
+n_values <- c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 100)
+
+p_threshold <- 0.05
+skew_threshold <- 0.1
+kurt_threshold <- 0.2
+
+```
+
+1.  **Uniform distribution**
+
+    Conduct Monte Carlo simulations to generate Z, and calculate the A2, p, Abs_Skew, and Abs_Kurtosis.
+
+    ```{r}
+    a_uni <- 0
+    b_uni <- 1
+
+    mu_uni <- (a_uni + b_uni) / 2
+    sigma_uni <- sqrt((b_uni - a_uni)^2 / 12)
+
+    results_uniform <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      p = numeric(),
+      Abs_Skew = numeric(),  # Absolute Skewness
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values) {
+      sample_means <- numeric(reps)
+
+      for (i in 1:reps) {
+        samples <- runif(n, min = a_uni, max = b_uni) 
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic
+      Z <- (sample_means - mu_uni) / (sigma_uni / sqrt(n))
+      
+      
+      # Anderson-Darling Statistic
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness 
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis 
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_uniform <- rbind(results_uniform, data.frame(
+        n = n,
+        A2 = ad_stat, 
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    # Print the resulting table
+    print(results_uniform)
+    ```
+
+    Find the smallest sample size n\*.
+
+    ```{r}
+    n_star_uniform <- results_uniform %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_uniform
+    ```
+
+    Regenerate Z using sample size n\*.
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- runif(n_star_uniform, min = a_uni, max = b_uni)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_uni <- (sample_means_star - mu_uni) / (sigma_uni / sqrt(n_star_uniform))
+
+    ```
+
+    Define a function to plot the histogram and Q-Q plot of Z.
+
+    ```{r}
+    plot_hist_qq <- function(Z_star, dist_name = "", n_star = NULL, bins = 40) {
+      df_plot <- data.frame(Z = Z_star)
+
+      title_suffix <- ""
+      if (dist_name != "") title_suffix <- dist_name
+      if (!is.null(n_star)) {
+        title_suffix <- paste0(title_suffix, ifelse(title_suffix == "", "", ", "),
+                               "n* = ", n_star)
+      }
+      if (title_suffix != "") title_suffix <- paste0(" (", title_suffix, ")")
+
+      p_hist <- ggplot(df_plot, aes(x = Z)) +
+        geom_histogram(aes(y = after_stat(density)),
+                       bins = bins, fill = "skyblue", color = "white") +
+        stat_function(fun = dnorm, color = "red", linewidth = 1) +
+        labs(title = paste0("Histogram of Z", title_suffix),
+             x = "Z", y = "Density") +
+        theme_minimal()
+
+      p_qq <- ggplot(df_plot, aes(sample = Z)) +
+        stat_qq() +
+        stat_qq_line(color = "red", linewidth = 1) +
+        labs(title = paste0("Q–Q Plot of Z", title_suffix),
+             x = "Theoretical Quantiles", y = "Sample Quantiles") +
+        theme_minimal()
+
+      p_hist + p_qq
+    }
+
+    ```
+
+    Plot the histogram and Q-Q plot to see its closeness to normality.
+
+    ```{r}
+    plot_hist_qq(Z_star_uni, dist_name = "Uniform", n_star = n_star_uniform)
+
+    ```
+
+    Since the n\* calculated above is very small, refine the sample size grid to find a more precise n\*.
+
+    ```{r}
+    n_values_uni <- c(5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+
+    results_uniform_refine <- data.frame(
+      n = integer(),
+      A2 = numeric(),
+      p = numeric(),
+      Abs_Skew = numeric(),
+      Abs_Kurtosis = numeric()
+    )
+
+    for (n in n_values_uni) {
+      sample_means <- numeric(reps)
+
+      for (i in 1:reps) {
+        samples <- runif(n, min = a_uni, max = b_uni)
+        sample_means[i] <- mean(samples)
+      }
+
+      Z <- (sample_means - mu_uni) / (sigma_uni / sqrt(n))
+
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+
+      results_uniform_refine <- rbind(results_uniform_refine,
+        data.frame(
+          n = n,
+          A2 = ad$statistic,
+          p = ad$p.value,
+          Abs_Skew = abs(skewness(Z)),
+          Abs_Kurtosis = abs(kurtosis(Z))
+      ))
+    }
+
+    print(results_uniform_refine)
+    ```
+
+    ```{r}
+    n_star_uniform_refined <- results_uniform_refine %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= 0.1,
+        Abs_Kurtosis <= 0.2
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_uniform_refined
+
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- runif(n_star_uniform_refined, min = a_uni, max = b_uni)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_uni_refined <- (sample_means_star - mu_uni) / (sigma_uni / sqrt(n_star_uniform_refined))
+
+    plot_hist_qq(Z_star_uni_refined, dist_name = "Uniform", n_star = n_star_uniform_refined)
+    ```
+
+2.  **Chi-square distribution**
+
+    ```{r}
+    set.seed(42)
+    df_chi <- 50 
+
+    mu_chi <- df_chi          
+    sigma_chi <- sqrt(df_chi * 2) 
+
+    # Data frame to store results
+    results_chisq <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      p = numeric(),
+      Abs_Skew = numeric(),  # Absolute Skewness
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values) {
+      sample_means <- numeric(reps)
+      
+      for (i in 1:reps) {
+        samples <- rchisq(n, df = df_chi) 
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic)
+      Z <- (sample_means - mu_chi) / (sigma_chi / sqrt(n))
+
+      
+      # Anderson-Darling Statistic
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_chisq <- rbind(results_chisq, data.frame(
+        n = n,
+        A2 = ad_stat, 
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    print(results_chisq)
+    ```
+
+    ```{r}
+    n_star_chi <- results_chisq %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_chi
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- rchisq(n_star_chi, df = df_chi)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_chi <- (sample_means_star - mu_chi) / (sigma_chi / sqrt(n_star_chi))
+
+    plot_hist_qq(Z_star_chi, dist_name = "Chi-square", n_star = n_star_chi)
+    ```
+
+3.  **Log-normal distribution**
+
+    ```{r}
+    set.seed(42)
+
+    mu_l <- 0
+    sigma_l <- 0.3
+
+    mu_log <- exp(mu_l + sigma_l^2 / 2)           
+    sigma_log <- sqrt((exp(sigma_l^2) - 1) * exp(2 * mu_l + sigma_l^2))
+
+    # Data frame to store results
+    results_lognormal <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      p = numeric(),
+      Abs_Skew = numeric(),  # Absolute Skewness
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values) {
+      sample_means <- numeric(reps)
+      
+      for (i in 1:reps) {
+        samples <- rlnorm(n, meanlog = mu_l, sdlog = sigma_l)
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic)
+      Z <- (sample_means - mu_log) / (sigma_log / sqrt(n))
+
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_lognormal <- rbind(results_lognormal, data.frame(
+        n = n,
+        A2 = ad_stat, 
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    print(results_lognormal)
+    ```
+
+    ```{r}
+    n_star_log <- results_lognormal %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_log
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- rlnorm(n_star_log, meanlog = mu_l, sdlog = sigma_l)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_log <- (sample_means_star - mu_log) / (sigma_log / sqrt(n_star_log))
+
+    plot_hist_qq(Z_star_chi, dist_name = "Log-normal", n_star = n_star_log)
+
+    ```
+
+4.  **Poisson distribution**
+
+    ```{r}
+    set.seed(42)
+    lambda_p <- 15 
+
+    mu_p <- lambda_p           
+    sigma_p <- sqrt(lambda_p) 
+
+    # Data frame to store results
+    results_poisson <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      Abs_Skew = numeric(),  # Absolute Skewness
+      p = numeric(),
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values) {
+      sample_means <- numeric(reps)
+      
+      for (i in 1:reps) {
+        samples <- rpois(n, lambda = lambda_p) 
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic)
+      Z <- (sample_means - mu_p) / (sigma_p / sqrt(n))
+
+      
+      # Anderson-Darling Statistic
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_poisson <- rbind(results_poisson, data.frame(
+        n = n,
+        A2 = ad_stat, 
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    print(results_poisson)
+    ```
+
+    ```{r}
+    n_star_p <- results_poisson %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_p
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- rpois(n_star_p, lambda = lambda_p)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_p <- (sample_means_star - mu_p) / (sigma_p / sqrt(n_star_p))
+
+    plot_hist_qq(Z_star_p, dist_name = "Poisson", n_star = n_star_p)
+    ```
+
+5.  **t-distribution**
+
+    ```{r}
+    set.seed(42)
+    df_t <- 10 
+
+    mu_t <- 0           
+    sigma_t <- sqrt(df_t / (df_t - 2)) 
+
+    # Data frame to store results
+    results_t <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      p = numeric(),
+      Abs_Skew = numeric(),  # Absolute Skewness
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values) {
+      sample_means <- numeric(reps)
+      
+      for (i in 1:reps) {
+        samples <- rt(n, df = df_t)
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic)
+      Z <- (sample_means - mu_t) / (sigma_t / sqrt(n))
+
+      
+      # Anderson-Darling Statistic
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_t <- rbind(results_t, data.frame(
+        n = n,
+        A2 = ad_stat,     
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    print(results_t)
+    ```
+
+    ```{r}
+    n_star_t <- results_t %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_t
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- rt(n_star_t, df = df_t)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_t <- (sample_means_star - mu_t) / (sigma_t / sqrt(n_star_t))
+
+    plot_hist_qq(Z_star_t, dist_name = "Student's t", n_star = n_star_t)
+    ```
+
+6.  **Bernoulli distribution**
+
+    ```{r}
+    set.seed(42)
+    n_values_b <- c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 100, 120, 140, 160, 180, 200)
+    p_b <- 0.5 
+
+    mu_b <- p_b           
+    sigma_b <- sqrt(p_b * (1 - p_b)) 
+
+    # Data frame to store results
+    results_bern <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      p = numeric(),
+      Abs_Skew = numeric(),  # Absolute Skewness
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values_b) {
+      sample_means <- numeric(reps)
+      
+      for (i in 1:reps) {
+        samples <- rbinom(n, size = 1, prob = p_b) 
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic)
+      Z <- (sample_means - mu_b) / (sigma_b / sqrt(n))
+
+      
+      # Anderson-Darling Statistic
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_bern <- rbind(results_bern, data.frame(
+        n = n,
+        A2 = ad_stat,
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    print(results_bern)
+    ```
+
+    ```{r}
+    n_star_b <- results_bern %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_b
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- rbinom(n_star_b, size = 1, prob = p_b)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_b <- (sample_means_star - mu_b) / (sigma_b / sqrt(n_star_b))
+
+    plot_hist_qq(Z_star_b, dist_name = "Bernoulli", n_star = n_star_b)
+
+
+    ```
+
+7.  **Mixed-normal distribution**
+
+    ```{r}
+    set.seed(42)
+    n_values_m = c(100, 120, 150, 180, 200, 250, 300)
+    w1 <- 0.9
+    w2 <- 1 - w1
+    mu1 <- 2
+    mu2 <- -2
+    sd1 <- 1
+    sd2 <- 1
+
+    mu_m <- w1 * mu1 + w2 * mu2
+    sigma_m <- sqrt(w1 * (mu1^2 + sd1^2) + w2 * (mu2^2 + sd2^2) - mu_m^2)
+
+    rmixnorm <- function(n, w1, mu1, sd1, w2, mu2, sd2) {
+      component <- sample(c(1, 2), size = n, replace = TRUE, prob = c(w1, w2))
+      samples <- numeric(n)
+      n1 <- sum(component == 1)
+      samples[component == 1] <- rnorm(n1, mean = mu1, sd = sd1)
+      n2 <- sum(component == 2)
+      samples[component == 2] <- rnorm(n2, mean = mu2, sd = sd2)
+      
+      return(samples)
+    }
+
+
+    # Data frame to store results
+    results_mixnorm <- data.frame(
+      n = integer(),
+      A2 = numeric(),        # Anderson-Darling statistic
+      p = numeric(),
+      Abs_Skew = numeric(),  # Absolute Skewness
+      Abs_Kurtosis = numeric() # Absolute Excess Kurtosis
+    )
+
+    for (n in n_values_m) {
+      sample_means <- numeric(reps)
+      
+      for (i in 1:reps) {
+        samples <- rmixnorm(n, w1, mu1, sd1, w2, mu2, sd2) 
+        sample_means[i] <- mean(samples)
+      }
+      
+      # Calculate the standardized Z-statistic)
+      Z <- (sample_means - mu_m) / (sigma_m / sqrt(n))
+
+      
+      # Anderson-Darling Statistic
+      Z_sub <- sample(Z, 500)
+      ad <- ad.test(Z_sub)
+      ad_stat <- ad$statistic
+      p_value <- ad$p.value
+      
+      # Absolute Skewness
+      skewness_val <- abs(e1071::skewness(Z))
+      
+      # Absolute Excess Kurtosis
+      kurtosis_val <- abs(e1071::kurtosis(Z)) 
+      
+      # Store results for the current n
+      results_mixnorm <- rbind(results_mixnorm, data.frame(
+        n = n,
+        A2 = ad_stat, 
+        p = p_value,
+        Abs_Skew = skewness_val, 
+        Abs_Kurtosis = kurtosis_val
+      ))
+    }
+
+    print(results_mixnorm)
+    ```
+
+    ```{r}
+    n_star_m <- results_mixnorm %>%
+      filter(
+        p >= 0.05,
+        Abs_Skew <= skew_threshold,
+        Abs_Kurtosis <= kurt_threshold
+      ) %>%
+      arrange(n) %>%
+      slice(1) %>%
+      pull(n)
+
+    n_star_m
+    ```
+
+    ```{r}
+    set.seed(42)
+
+    sample_means_star <- numeric(reps)
+
+    for (i in 1:reps) {
+      samples <- rmixnorm(n_star_m, w1, mu1, sd1, w2, mu2, sd2)
+      sample_means_star[i] <- mean(samples)
+    }
+
+    Z_star_m <- (sample_means_star - mu_m) / (sigma_m / sqrt(n_star_m))
+
+    plot_hist_qq(Z_star_m, dist_name = "Mixed-normal", n_star = n_star_m)
+    ```
